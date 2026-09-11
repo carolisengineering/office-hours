@@ -1,0 +1,6 @@
+.venv/
+__pycache__/
+*.pyc
+.langfuse/
+.env
+*-lf-events-export-*.json

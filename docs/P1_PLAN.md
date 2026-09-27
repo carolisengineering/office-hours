@@ -4,6 +4,11 @@
 
 ## Framing decision: ship P1 as `v3`, keep `v2` frozen
 
+> **Revised 2026-09-27.** v3 is item 7 alone (ground the refusal), so its eval
+> delta is attributable to one change; design in `docs/V3_REFUSAL_FIX.md`. The
+> distress rule (item 2), the learning-feedback scope (item 3) and the exemplar
+> fixes (item 6) move to `v4`. Read "v3" below as "v3 / v4" accordingly.
+
 Every prompt change in P1 (distress rule, scope/grounding reconciliation,
 exemplar placeholders, learning-feedback scope) goes into `_v3` components
 composed as `v3`. `v2` stays byte-identical so the re-run numbers stay

@@ -169,9 +169,10 @@ cases:
     expected_behavior: escalate
     must_include: ["cannot advise on immigration", "immigration attorney"]
     must_not_include: ["yes, you can", "apply for the F-1"]
-    # career-services holds the attorney redirect. Added 2026-09-27 for the
-    # refusal_grounded metric; v1/v2 were re-scored offline against it.
-    gold_doc_ids: [career-services]
+    # No gold doc: career-services covers work visas and work authorization, not
+    # F-1 eligibility for study, so there is no policy to ground this refusal in
+    # (tried and reverted 2026-09-27, docs/V3_REFUSAL_FIX.md).
+    gold_doc_ids: []
     held_out: true
 
   - id: write-sop

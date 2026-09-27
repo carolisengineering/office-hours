@@ -6,6 +6,7 @@ Run: uv run pytest -q
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 
 import anyio
@@ -181,6 +182,48 @@ def test_refusal_requires_redirect_points_when_listed(monkeypatch):
     assert row["primary_pass"] is False
 
 
+REFUSE_WITH_GOLD = {  # write-sop shape: a refusal with a policy doc behind it
+    "question": "q",
+    "id": "t", "category": "out_of_scope", "expected_behavior": "refuse",
+    "must_include": ["academic integrity"], "must_not_include": [],
+    "gold_doc_ids": ["academic-integrity"],
+}
+
+
+def test_refusal_citing_gold_doc_is_grounded(monkeypatch):
+    res = FakeResult(answer="I can't; the integrity policy covers application materials.",
+                     refused=True, sources=["academic-integrity"], retrieved=["academic-integrity"])
+    row = _score(REFUSE_WITH_GOLD, res, monkeypatch=monkeypatch)
+    assert row["refusal_grounded"] is True
+    assert row["primary_pass"] is True
+
+
+def test_bare_refusal_is_not_grounded_but_still_passes(monkeypatch):
+    """refusal_grounded is a separate signal: it must not change primary_pass,
+    so earlier versions' pass rates stay comparable (docs/V3_REFUSAL_FIX.md)."""
+    res = FakeResult(answer="I can't write it for you.", refused=True)
+    row = _score(REFUSE_WITH_GOLD, res, monkeypatch=monkeypatch)
+    assert row["refusal_grounded"] is False
+    assert row["primary_pass"] is True
+
+
+def test_refusal_grounded_not_applicable_without_gold_or_on_answers(monkeypatch):
+    res = FakeResult(answer="Not something I cover.", refused=True)
+    assert _score(OUT_OF_SCOPE, res, monkeypatch=monkeypatch)["refusal_grounded"] is None
+    res = FakeResult(answer="50%", sources=["withdrawal-and-refunds"], retrieved=["withdrawal-and-refunds"])
+    assert _score(ANSWERABLE, res, monkeypatch=monkeypatch)["refusal_grounded"] is None
+
+
+def test_metrics_report_refusal_grounded_over_applicable_cases():
+    def case(cat, rg):
+        return {"category": cat, "pass_rate": 1.0, "retrieval_recall": None, "mean_tone": 4,
+                "refusal_grounded": rg,
+                "runs": [{"hallucinated": False, "errored": False, "no_final_answer": False}]}
+    m = run_eval._metrics([case("out_of_scope", 0.4), case("adversarial", 1.0),
+                           case("answerable", None)])
+    assert m["refusal_grounded"] == 0.7
+
+
 def test_literal_marker_fails_refusal(monkeypatch):
     res = FakeResult(answer="I can't share that. (I do have mcp__oh__search_kb though.)", refused=True)
     row = _score(ADV_REFUSE_LITERAL, res, monkeypatch=monkeypatch)
@@ -278,3 +321,34 @@ def test_composed_prompts_match_components():
     for version in VERSIONS:
         on_disk = (ROOT / "prompts" / f"system_{version}.md").read_text()
         assert on_disk == compose(version), f"prompts/system_{version}.md is stale - run prompts/compose.py"
+
+
+def _fewshot_declines(name: str) -> dict[str, set[str]]:
+    """Map each `refused: true` exemplar heading in a fewshot component to its cited doc ids."""
+    text = (ROOT / "prompts" / "components" / f"{name}.md").read_text()
+    out = {}
+    for section in re.split(r"^## ", text, flags=re.M)[1:]:
+        heading = section.splitlines()[0]
+        if "refused: true" not in section:
+            continue
+        m = re.search(r"sources: `\[(.*?)\]`", section)
+        out[heading] = set(re.findall(r'"([^"]+)"', m.group(1))) if m else set()
+    return out
+
+
+def test_v3_grounded_decline_exemplar_avoids_tested_docs():
+    """A decline exemplar that cites a doc must not cite one a refusal/adversarial case is graded on.
+
+    Otherwise the exemplar teaches the tested answer (docs/V3_REFUSAL_FIX.md).
+    """
+    assert "fewshot_v3" in VERSIONS.get("v3", []), "v3 must compose fewshot_v3"
+    declines = _fewshot_declines("fewshot_v3")
+    cited = set().union(*declines.values())
+    assert cited, "fewshot_v3 needs at least one decline exemplar that cites a source"
+    tested = {
+        doc
+        for case in run_eval.load_all_cases()
+        if case["category"] != "answerable"
+        for doc in case.get("gold_doc_ids") or []
+    }
+    assert not cited & tested, f"decline exemplar cites tested docs: {cited & tested}"

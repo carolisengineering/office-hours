@@ -27,6 +27,12 @@ VERSIONS: dict[str, list[str]] = {
     #   grounding_v2     - correct false premises even inside a refusal  (A4)
     #   fewshot_v2       - + tool-enumeration and injected-instruction exemplars
     "v2": ["persona", "scope", "grounding_v2", "safety_v2", "output_format_v2", "fewshot_v2"],
+    # v3: ground the refusal (P1 item 7, docs/V3_REFUSAL_FIX.md). One change only,
+    # so the v2 -> v3 delta is attributable:
+    #   grounding_v3 - search and state the policy when declining a policy request
+    #   scope_v3     - stating the program's policy is not a partial answer
+    #   fewshot_v3   - + a grounded-decline exemplar (leave of absence, untested)
+    "v3": ["persona", "scope_v3", "grounding_v3", "safety_v2", "output_format_v2", "fewshot_v3"],
 }
 
 SEP = "\n\n---\n\n"

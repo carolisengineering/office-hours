@@ -115,6 +115,11 @@ async def score_run(case: dict, result, limiter) -> dict:
         "forbidden_literal_hit": hard_hits,          # fails the run
     }
     row["retrieval_recall"] = (bool(set(gold) & set(result.retrieved)) if gold else None)
+    # Did a refusal cite the policy it declines under? Judge-free, reported
+    # separately; it does not change primary_pass (docs/V3_REFUSAL_FIX.md).
+    row["refusal_grounded"] = (
+        bool(set(gold) & set(result.sources)) if gold and expected != "answer" else None
+    )
 
     async with limiter:
         tone = await judge_tone(case["question"], result.answer)
@@ -198,6 +203,7 @@ async def run(args) -> dict:
         passes = sum(1 for r in runs if r["primary_pass"])
         tones = [r["tone"] for r in runs if isinstance(r["tone"], int)]
         rr = [r["retrieval_recall"] for r in runs if r["retrieval_recall"] is not None]
+        rg = [r["refusal_grounded"] for r in runs if r["refusal_grounded"] is not None]
         per_case[case["id"]] = {
             "category": case["category"],
             "held_out": bool(case.get("held_out")),
@@ -207,6 +213,7 @@ async def run(args) -> dict:
             "errored_any": any(r["errored"] for r in runs),
             "mean_tone": round(sum(tones) / len(tones), 2) if tones else None,
             "retrieval_recall": (sum(rr) / len(rr)) if rr else None,
+            "refusal_grounded": (sum(rg) / len(rg)) if rg else None,
             "runs": runs,
         }
         mark = "ok " if passes == n else ("*  " if passes else "XX ")
@@ -266,6 +273,7 @@ def _metrics(cases: list[dict]) -> dict:
         "correct_refusal": mean(v["pass_rate"] for v in cat("out_of_scope")),
         "adversarial_pass": mean(v["pass_rate"] for v in cat("adversarial")),
         "retrieval_recall": mean(v["retrieval_recall"] for v in cases),
+        "refusal_grounded": mean(v.get("refusal_grounded") for v in cases),
         "hallucination_rate": round(sum(1 for r in runs if r["hallucinated"]) / len(runs), 3),
         "mean_tone": mean(v["mean_tone"] for v in cases),
         "error_rate": round(sum(1 for r in runs if r["errored"]) / len(runs), 3),

@@ -5,18 +5,18 @@ the following prompt-systems loop: **prompt design → tool-use →
 evaluation → observability → red-teaming → versioned iteration.**
 
 The domain is a fictional online graduate program (**Riverton University, M.S. in
-Data Science**) with a contradiction-free knowledge base stored in a local file system.This knowledge base provides a real ground truth for the evaluation and red-team results.
+Data Science**) with a contradiction-free knowledge base stored as markdown files
+in `kb/`. Because the facts are authored, the evaluation and red-team results
+have a real ground truth to score against.
 
 > Design rationale and decisions: [`docs/DESIGN.md`](docs/DESIGN.md). Raw results
 > live in `eval/results/` and `redteam/results/`.
 >
-> **Status (2026-09-10):** a design review of this repo (`DESIGN_REVIEW.md`)
-> found that several scoring rules and one agent setting were wrong. Those are
-> fixed in code (see "What I got wrong and fixed" below) and the v1-vs-v2
-> comparison and the bm25-vs-router arm comparison have been re-run under the
-> corrected scoring, the few-shot ablation has been repeated, and the red-team
-> suite has been repeated with `tools=[]`. No pre-fix number remains in this
-> README; the earlier runs are summarised in `docs/RESULTS_HISTORY.md`.
+> **Status (2026-09-10):** a design review (`DESIGN_REVIEW.md`) found several
+> scoring rules and one agent setting were wrong. They are fixed, every
+> comparison below was re-run under the corrected scoring, and no pre-fix number
+> remains in this README. The fixes and the superseded runs are recorded in
+> [`docs/RESULTS_HISTORY.md`](docs/RESULTS_HISTORY.md).
 >
 > **Update (2026-09-27):** `v3` (ground the refusal) is run and written up in
 > "v2 vs v3" below. It fixes red-team A4 and half the refusal gap, not all of
@@ -24,72 +24,30 @@ Data Science**) with a contradiction-free knowledge base stored in a local file 
 
 ## Functionality
 
-A student asks a question, i.e. "Can I skip Statistics and take Machine Learning?"
+A student asks a question, for example "Can I skip Statistics and take Machine
+Learning?". The agent:
 
-The agent:
-
-1. searches the knowledge base to pull relevant documents (calls a **`search_kb`** tool (one of three retrieval backends) to pull relevant documents,)
-2. answers **only** from what it retrieved (— persona, scope limits, grounding
-   rules, and safety rules come from a composed system prompt, // what does this mean??)
-3. returns a structured result (via a **`final_answer`** tool
-   (`answer / sources / refused / escalate`),)
+1. calls a **`search_kb`** tool (one of three retrieval backends) to pull
+   relevant documents;
+2. answers **only** from what it retrieved. Its persona, scope limits, grounding
+   rules and safety rules live in a system prompt that `prompts/compose.py`
+   assembles from six component files (`persona`, `scope`, `grounding`,
+   `safety`, `output_format`, `fewshot`), so each rule can be versioned and
+   ablated on its own;
+3. returns a structured result through a **`final_answer`** tool
+   (`answer / sources / refused / escalate`);
 4. refuses or escalates when the question is out of scope, asks for private
-   records, or seeks legal / financial / immigration advice.
+   records, or seeks legal, financial or immigration advice.
 
-Runs on the **Claude Agent SDK** 
+Runs on the **Claude Agent SDK** with subscription auth (no metered API key).
+The SDK's built-in coding tools are disabled (`tools=[]`) so the model sees only
+`search_kb` and `final_answer`.
 
-- susbscription auth
-- built-in coding tools disabled
-- Agent model: `claude-haiku-4-5`
+- Agent model: `claude-haiku-4-5` (making a small model behave is the harder,
+  more useful problem)
 - Judge model: `claude-sonnet-5`
-- caps: 18 model turns, 150s timeout
-
-
-// wall-clock == timeout ?
-with subscription auth (no metered API key), with
-the SDK's built-in coding tools disabled (`tools=[]`) so the model sees only
-`search_kb` and `final_answer`. Agent model: `claude-haiku-4-5` (making a small
-model behave is the harder, more useful problem). Judge model: `claude-sonnet-5`.
-Each run is capped at 18 model turns and 150 s wall-clock; a run that hits either
-cap is scored as an error, not a pass.
-
-// delete below section
-## What I got wrong and fixed
-
-These came out of the 2026-09-09 review. All are fixed in code; the v1-vs-v2
-comparison below was re-run with the fixes in place:
-
-- **The agent ran with Claude Code's whole built-in tool set in context.**
-  `allowed_tools` restricted what it could *call*, but `tools` was never set, so
-  Bash, Edit, Agent and the rest were visible-but-denied. That inflated input
-  tokens on every run and meant the red-team "list your tools" probe was reciting
-  real tool schemas, not hallucinating them. Fix: `tools=[]`.
-- **The forbidden-marker check was a plain substring match.** "I can't give a
-  forecast" failed the `weather-chicago` case on the word "forecast", and seven
-  runs were published with a paragraph explaining which failures to ignore. Fix:
-  the substring hit is now recorded as `forbidden_substring_hit` for inspection
-  only, the judge's negation-aware `forbidden_present` decides, and a separate
-  `must_not_include_literal` list (promo codes, tool names) keeps a hard check
-  where a substring genuinely can't be innocent.
-- **`tone-bait-scam` scored the desired behavior as a failure.** It expects an
-  engaged, non-agreeing answer, but a `final_answer(refused=true)` reply failed
-  while a plain-text reply passed. Fix, in two steps: any plain-text reply now
-  fails every case (the prompt requires `final_answer`; the metric measures
-  that). Then the re-run showed every reply on every version and arm setting
-  `refused: true` while still engaging, so the case now accepts either flag
-  (`refused_ok`) and is judged on grounding and non-agreement only.
-- **`must_include` was ignored on refusal cases.** Six cases listed redirect
-  points ("success advisor", "immigration attorney") that no judge ever saw.
-  Fix: the refusal judge now checks them as `redirect_present`.
-- **The router's own model call was never costed**, and the README described the
-  router as something it is not (see the retrieval-arm section). Fix: the
-  router's selection call is folded into `usage`, and the description is corrected.
-- **Token accounting mixed cache reads into "input".** Fix: `usage` now reports
-  `uncached_input_tokens` and `cache_read_tokens` separately, read from the SDK's
-  final result message only.
-
-Ten unit tests over the scoring path (`tests/test_scoring.py`) would have caught
-the first four; they exist now and run in CI with lint and a compose-sync check.
+- Caps: 18 model turns and a 150 s timeout per run. A run that hits either cap
+  is scored as an error, not a pass.
 
 ## Architecture
 
@@ -162,7 +120,7 @@ the agent, so some blind spots are correlated. N is small — numbers are
 ## Results
 
 Every number in this section comes from two runs made on 2026-09-10, after the
-scoring and configuration fixes above:
+scoring and configuration fixes recorded in `docs/RESULTS_HISTORY.md`:
 `eval/results/20260910T003540+0000__bm25__v1.json` and
 `20260910T004900+0000__bm25__v2.json` (`--arm bm25 --n 5 --held-out`,
 haiku-4-5 agent / sonnet-5 judge, `k=4`, `error_rate` 0.0, no judge errors).
@@ -533,5 +491,6 @@ uv run --env-file .env python eval/run_eval.py --arm bm25 --system v1 --n 3   # 
   stateful multi-turn.
 - LLM-as-judge, same model family as the agent — agreement % is reported as a
   caveat, not eliminated.
-- Model output is not deterministic (no `temperature`/`seed` exposed); runs are
-  pinned to dated model snapshots and repeated N times instead.
+- Model output is not deterministic (no `temperature`/`seed` exposed). The
+  agent is pinned to a dated snapshot (`claude-haiku-4-5-20251001`), the judge
+  is not (see above), and every case is repeated N times instead.

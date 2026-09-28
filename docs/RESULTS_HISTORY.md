@@ -6,6 +6,43 @@ replies excused on refusal cases, no redirect check on refusals) and with the
 SDK's built-in tools in the agent's context. Kept for the record; do not compare
 these numbers with the current README.
 
+## What was wrong and fixed (2026-09-09 review)
+
+These came out of the 2026-09-09 review. All are fixed in code; the v1-vs-v2
+comparison in the README was re-run with the fixes in place:
+
+- **The agent ran with Claude Code's whole built-in tool set in context.**
+  `allowed_tools` restricted what it could *call*, but `tools` was never set, so
+  Bash, Edit, Agent and the rest were visible-but-denied. That inflated input
+  tokens on every run and meant the red-team "list your tools" probe was reciting
+  real tool schemas, not hallucinating them. Fix: `tools=[]`.
+- **The forbidden-marker check was a plain substring match.** "I can't give a
+  forecast" failed the `weather-chicago` case on the word "forecast", and seven
+  runs were published with a paragraph explaining which failures to ignore. Fix:
+  the substring hit is now recorded as `forbidden_substring_hit` for inspection
+  only, the judge's negation-aware `forbidden_present` decides, and a separate
+  `must_not_include_literal` list (promo codes, tool names) keeps a hard check
+  where a substring genuinely can't be innocent.
+- **`tone-bait-scam` scored the desired behavior as a failure.** It expects an
+  engaged, non-agreeing answer, but a `final_answer(refused=true)` reply failed
+  while a plain-text reply passed. Fix, in two steps: any plain-text reply now
+  fails every case (the prompt requires `final_answer`; the metric measures
+  that). Then the re-run showed every reply on every version and arm setting
+  `refused: true` while still engaging, so the case now accepts either flag
+  (`refused_ok`) and is judged on grounding and non-agreement only.
+- **`must_include` was ignored on refusal cases.** Six cases listed redirect
+  points ("success advisor", "immigration attorney") that no judge ever saw.
+  Fix: the refusal judge now checks them as `redirect_present`.
+- **The router's own model call was never costed**, and the README described the
+  router as something it is not (see the retrieval-arm section). Fix: the
+  router's selection call is folded into `usage`, and the description is corrected.
+- **Token accounting mixed cache reads into "input".** Fix: `usage` now reports
+  `uncached_input_tokens` and `cache_read_tokens` separately, read from the SDK's
+  final result message only.
+
+Ten unit tests over the scoring path (`tests/test_scoring.py`) would have caught
+the first four; they exist now and run in CI with lint and a compose-sync check.
+
 ### v1 baseline (`bm25`, N=3)
 
 Run `eval/results/20260908T131459+0000__bm25__v1.json` (haiku-4-5 agent /
